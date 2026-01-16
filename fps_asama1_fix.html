@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>FPS</title>
+<style>
+body{margin:0;overflow:hidden;background:black;color:white;font-family:Arial}
+
+#crosshair{
+ position:fixed;top:50%;left:50%;
+ width:18px;height:18px;
+ transform:translate(-50%,-50%);
+}
+#crosshair:before,#crosshair:after{
+ content:"";position:absolute;background:white;
+}
+#crosshair:before{width:2px;height:18px;left:8px}
+#crosshair:after{width:18px;height:2px;top:8px}
+
+#select{
+ position:fixed;inset:0;
+ background:#000c;color:white;
+ display:flex;flex-direction:column;
+ justify-content:center;align-items:center;
+ z-index:10
+}
+.btn{padding:15px 40px;margin:10px;font-size:22px}
+
+#hpBox{
+ position:fixed;top:10px;left:10px;
+ width:200px;height:20px;
+ border:2px solid white
+}
+#hp{height:100%;background:red;width:100%}
+
+#hud{
+ position:fixed;top:10px;right:10px;
+ text-align:right
+}
+
+#reload{
+ position:fixed;top:50%;left:50%;
+ transform:translate(-50%,-50%);
+ font-size:40px;color:red;display:none
+}
+
+#abilities{
+ position:fixed;bottom:10px;left:10px;
+ display:flex;gap:10px
+}
+.ab{
+ width:60px;height:60px;
+ border:2px solid white;
+ display:flex;align-items:center;justify-content:center;
+ background:#0008;font-size:12px;text-align:center
+}
+</style>
+</head>
+<body>
+
+<div id="select">
+ <h1>Agent Seç</h1>
+ <button class="btn" onclick="start('REYNA')">REYNA</button>
+ <button class="btn" onclick="start('JETT')">JETT</button>
+</div>
+
+<div id="crosshair"></div>
+<div id="hpBox"><div id="hp"></div></div>
+
+<div id="hud">
+ <div id="weapon">AKM</div>
+ <div id="ammo">30 / ∞</div>
+</div>
+
+<div id="reload">RELOAD</div>
+
+<div id="abilities">
+ <div class="ab">Q<br>SKILL</div>
+ <div class="ab">E<br>SKILL</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+let scene,camera,renderer,player;
+let bots=[],keys={},smokes=[],souls=[];
+let agent=null,blindUntil=0;
+
+let weapon="AK",ammo=30,reloading=false;
+let hp=100;
+
+const shootSound=new Audio("https://cdn.jsdelivr.net/gh/joshcomeau/ambient-sounds@main/sfx/shot.wav");
+shootSound.volume=0.3;
+
+function start(a){
+ agent=a;
+ document.getElementById("select").style.display="none";
+ init();
+}
+
+function init(){
+ scene=new THREE.Scene();
+ scene.background=new THREE.Color(0x87ceeb);
+
+ camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1000);
+ renderer=new THREE.WebGLRenderer();
+ renderer.setSize(innerWidth,innerHeight);
+ document.body.appendChild(renderer.domElement);
+
+ player=new THREE.Object3D();
+ scene.add(player);
+ player.add(camera);
+ camera.position.y=1.7;
+ player.position.set(0,2,10);
+
+ const floor=new THREE.Mesh(
+  new THREE.BoxGeometry(200,1,200),
+  new THREE.MeshBasicMaterial({color:0x3a9})
+ );
+ floor.position.y=-0.5;
+ scene.add(floor);
+
+ for(let i=0;i<4;i++)spawnBot();
+
+ document.body.onclick=()=>document.body.requestPointerLock();
+ document.addEventListener("mousemove",mouse);
+ document.addEventListener("keydown",keyDown);
+ document.addEventListener("keyup",e=>keys[e.code]=false);
+ document.addEventListener("mousedown",shoot);
+
+ loop();
+}
+
+function spawnBot(){
+ let b=new THREE.Mesh(
+  new THREE.BoxGeometry(2,4,2),
+  new THREE.MeshBasicMaterial({color:0x00f})
+ );
+ b.position.set(Math.random()*40-20,0,Math.random()*40-20);
+ b.hp=100;
+ scene.add(b);
+ bots.push(b);
+}
+
+let yaw=0,pitch=0;
+function mouse(e){
+ if(!document.pointerLockElement)return;
+ yaw-=e.movementX*0.002;
+ pitch-=e.movementY*0.002;
+ pitch=Math.max(-1.3,Math.min(1.3,pitch));
+ player.rotation.y=yaw;
+ camera.rotation.x=pitch;
+}
+
+function keyDown(e){
+ keys[e.code]=true;
+
+ if(e.code==="Digit1"){weapon="AK";updateHUD()}
+ if(e.code==="Digit2"){weapon="KNIFE";updateHUD()}
+
+ if(e.code==="KeyR"&&weapon==="AK"&&ammo<30&&!reloading)reload();
+
+ if(e.code==="KeyQ")abilityQ();
+ if(e.code==="KeyE")abilityE();
+}
+
+function abilityQ(){
+ const ray=new THREE.Raycaster();
+ ray.setFromCamera(new THREE.Vector2(0,0),camera);
+ const pos=ray.ray.origin.clone().add(ray.ray.direction.clone().multiplyScalar(15));
+
+ if(agent==="REYNA"){
+  let eye=new THREE.Mesh(
+   new THREE.SphereGeometry(1.5),
+   new THREE.MeshBasicMaterial({color:0x800080})
+  );
+  eye.position.copy(pos);
+  scene.add(eye);
+  blindUntil=Date.now()+4000;
+  setTimeout(()=>scene.remove(eye),4000);
+ }
+
+ if(agent==="JETT"){
+  let smoke=new THREE.Mesh(
+   new THREE.SphereGeometry(3),
+   new THREE.MeshBasicMaterial({color:0xaaa,transparent:true,opacity:0.5})
+  );
+  smoke.position.copy(pos);
+  scene.add(smoke);
+  smokes.push(smoke);
+  setTimeout(()=>{
+   scene.remove(smoke);
+   smokes.splice(smokes.indexOf(smoke),1);
+  },4000);
+ }
+}
+
+function abilityE(){
+ if(agent==="JETT"){
+  player.translateZ(-6);
+ }
+
+ if(agent==="REYNA"){
+  const ray=new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(0,0),camera);
+  const hit=ray.intersectObjects(souls);
+  if(hit.length){
+   let s=hit[0].object;
+   if(Date.now()-s.spawn<5000){
+    hp=Math.min(100,hp+30);
+    document.getElementById("hp").style.width=hp+"%";
+    scene.remove(s);
+    souls.splice(souls.indexOf(s),1);
+   }
+  }
+ }
+}
+
+function reload(){
+ reloading=true;
+ document.getElementById("reload").style.display="block";
+ setTimeout(()=>{
+  ammo=30;
+  reloading=false;
+  document.getElementById("reload").style.display="none";
+  updateHUD();
+ },4000);
+}
+
+function shoot(){
+ if(reloading)return;
+ shootSound.currentTime=0;shootSound.play();
+
+ const ray=new THREE.Raycaster();
+ ray.setFromCamera(new THREE.Vector2(0,0),camera);
+ const hit=ray.intersectObjects(bots);
+
+ if(weapon==="AK"){
+  if(ammo<=0)return;
+  ammo--;
+  if(hit.length)hit[0].object.hp-=30;
+ }
+
+ if(weapon==="KNIFE"){
+  if(hit.length&&hit[0].distance<3){
+   hit[0].object.hp-=50;
+  }
+ }
+
+ bots.forEach(b=>{
+  if(b.hp<=0){
+   if(agent==="REYNA")spawnSoul(b.position);
+   scene.remove(b);
+   bots.splice(bots.indexOf(b),1);
+   spawnBot();
+  }
+ });
+
+ updateHUD();
+}
+
+function spawnSoul(pos){
+ let s=new THREE.Mesh(
+  new THREE.ConeGeometry(1,2,3),
+  new THREE.MeshBasicMaterial({color:0xff4fd8})
+ );
+ s.position.copy(pos);
+ s.spawn=Date.now();
+ scene.add(s);
+ souls.push(s);
+}
+
+function updateHUD(){
+ document.getElementById("weapon").innerText=
+  weapon==="AK"?"AKM":"BIÇAK";
+ document.getElementById("ammo").innerText=
+  weapon==="AK"?ammo+" / ∞":"∞";
+}
+
+function loop(){
+ requestAnimationFrame(loop);
+
+ if(keys.KeyW)player.translateZ(-0.12);
+ if(keys.KeyS)player.translateZ(0.12);
+ if(keys.KeyA)player.translateX(-0.12);
+ if(keys.KeyD)player.translateX(0.12);
+
+ bots.forEach(b=>{
+  let stop=Date.now()<blindUntil;
+  smokes.forEach(s=>{
+   if(b.position.distanceTo(s.position)<3)stop=true;
+  });
+  if(!stop){
+   b.lookAt(player.position);
+   b.translateZ(0.03);
+  }
+  if(b.position.distanceTo(player.position)<1.8){
+   hp-=0.05;
+   document.getElementById("hp").style.width=hp+"%";
+  }
+ });
+
+ souls.forEach(s=>{
+  if(Date.now()-s.spawn>5000){
+   scene.remove(s);
+   souls.splice(souls.indexOf(s),1);
+  }
+ });
+
+ renderer.render(scene,camera);
+}
+
+</script>
+</body>
+</html>
